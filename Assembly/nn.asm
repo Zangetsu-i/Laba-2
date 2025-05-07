@@ -1,115 +1,174 @@
 section .data
-    promptS db "Введите S: ", 0xA
-    promptN db "Введите N: ", 0xA
-    promptM db "Введите M: ", 0xA
-    success db "Минимальное количество дней: ", 0xA
-    fail db "Выжить невозможно", 0xA
+    promptS db "Введите S: ", 0
+    promptN db "Введите N: ", 0
+    promptM db "Введите M: ", 0
+    success db "Минимальное количество дней: ", 0
+    fail db "Выжить невозможно", 0
+    newline db 10, 0
 
 section .bss
-    S resb 1
-    N resb 1
-    M resb 1
-    buf resb 2
+    S resd 1
+    N resd 1
+    M resd 1
+    buf resb 16
+    numstr resb 16
+    result resd 1
 
 section .text
     global _start
 
 _start:
     ; Ввод S
-    mov edx, 12
-    mov ecx, promptS
+    mov rsi, promptS
     call print
     call read_num
-    mov [S], al
+    mov [S], eax
 
     ; Ввод N
-    mov edx, 12
-    mov ecx, promptN
+    mov rsi, promptN
     call print
     call read_num
-    mov [N], al
+    mov [N], eax
 
     ; Ввод M
-    mov edx, 12
-    mov ecx, promptM
+    mov rsi, promptM
     call print
     call read_num
-    mov [M], al
+    mov [M], eax
 
     ; Проверка M > N
-    mov al, [M]
-    cmp al, [N]
-    jbe continue
-    jmp impossible
+    mov eax, [M]
+    cmp eax, [N]
+    jle .continue
+    jmp .impossible
 
-continue:
+.continue:
     ; sundays = S / 7
-    mov al, [S]
-    xor ah, ah
-    mov bl, 7
-    div bl        ; AL = S/7
-    mov bl, al    ; sundays -> BL
+    mov eax, [S]
+    mov ecx, 7
+    xor edx, edx
+    div ecx
+    mov ebx, eax        ; sundays → EBX
 
     ; shop_work = S - sundays
-    mov al, [S]
-    sub al, bl    ; AL = shop_work
-    mov cl, al    ; save shop_work in CL
+    mov eax, [S]
+    sub eax, ebx
+    mov ecx, eax        ; shop_work → ECX
 
     ; need_food = S * M
-    mov al, [S]
-    mul byte [M]  ; AX = S * M
+    mov eax, [S]
+    mul dword [M]       ; EDX:EAX = S * M
+    mov [result], eax   ; сохраняем need_food
 
-    ; min_days = (need_food + N -1) / N
-    mov bx, ax    ; BX = need_food
-    mov al, [N]
-    dec al
-    add bx, ax    ; need_food + N -1
-    mov ax, bx
-    mov bl, [N]
-    div bl        ; AL = min_days
+    ; min_days = ceil(need_food / N) = (need_food + N - 1) / N
+    mov eax, [result]   ; need_food
+    mov edx, [N]        ; N
+    dec edx             ; N - 1
+    add eax, edx        ; need_food + N - 1
+    xor edx, edx
+    div dword [N]       ; EAX = min_days
+    mov [result], eax   ; сохраняем min_days
 
-    ; if min_days > shop_work -> impossible
-    cmp al, cl
-    jbe possible
-    jmp impossible
+    ; Проверка min_days > shop_work → impossible
+    cmp eax, ecx
+    jle .possible
+    jmp .impossible
 
-possible:
-    mov edx, 28
-    mov ecx, success
+.possible:
+    mov rsi, success
     call print
-    add al, '0'
-    mov [buf], al
-    mov byte [buf+1], 0xA
-    mov edx, 2
-    mov ecx, buf
+
+    ; Выводим результат
+    mov eax, [result]
+    mov rdi, numstr
+    call int_to_string
+    mov rsi, numstr
     call print
-    jmp exit
 
-impossible:
-    mov edx, 19
-    mov ecx, fail
+    mov rsi, newline
     call print
-    jmp exit
+    jmp .exit
 
-exit:
-    mov eax,1
-    xor ebx,ebx
-    int 0x80
+.impossible:
+    mov rsi, fail
+    call print
+    mov rsi, newline
+    call print
 
-; --- procedures ---
+.exit:
+    ; Системный вызов exit
+    mov rax, 60
+    xor rdi, rdi
+    syscall
 
+; Процедура print
 print:
-    mov eax,4
-    mov ebx,1
-    int 0x80
+    mov rdi, rsi
+    xor rcx, rcx
+    not rcx
+    xor al, al
+    cld
+    repne scasb
+    not rcx
+    dec rcx
+    mov rdx, rcx
+    
+    mov rax, 1
+    mov rdi, 1
+    syscall
     ret
 
+; Процедура read_num
 read_num:
-    mov eax,3
-    mov ebx,0
-    mov ecx,buf
-    mov edx,2
-    int 0x80
-    mov al, [buf]
-    sub al, '0'
+    mov rax, 0
+    mov rdi, 0
+    mov rsi, buf
+    mov rdx, 16
+    syscall
+
+    ; Преобразование строки в число
+    xor eax, eax
+    mov rsi, buf
+    mov ecx, 10
+.next_digit:
+    movzx edx, byte [rsi]
+    inc rsi
+    cmp edx, '0'
+    jb .done
+    cmp edx, '9'
+    ja .done
+    sub edx, '0'
+    imul eax, ecx
+    add eax, edx
+    jmp .next_digit
+.done:
+    ret
+
+; Процедура int_to_string
+int_to_string:
+    mov ecx, 10
+    xor r8d, r8d
+    test eax, eax
+    jnz .convert
+    mov byte [rdi], '0'
+    inc rdi
+    mov byte [rdi], 0
+    ret
+    
+.convert:
+    xor edx, edx
+    div ecx
+    add dl, '0'
+    push rdx
+    inc r8d
+    test eax, eax
+    jnz .convert
+    
+.store:
+    pop rdx
+    mov [rdi], dl
+    inc rdi
+    dec r8d
+    jnz .store
+    mov byte [rdi], 0
     ret
